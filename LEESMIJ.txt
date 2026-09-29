@@ -1,0 +1,60 @@
+VR-VIEWER STARTER
+=================
+
+Met deze app bekijk je je constructie in VR op de Meta Quest, zonder
+terminalvensters of commando's.
+
+
+EERSTE KEER (±10 minuten)
+-------------------------
+1. Installeer Python via https://www.python.org/downloads
+   BELANGRIJK: vink "Add python.exe to PATH" aan tijdens de installatie.
+
+2. Dubbelklik op "Start VR-viewer.bat". De app opent.
+
+3. Klik in stap 2 op "Download ngrok".
+
+4. Maak een gratis account op ngrok.com (knop "Gratis account maken").
+   Klik daarna op "Authtoken invullen…" en plak je token.
+   Dit hoef je maar één keer te doen.
+
+
+ELKE KEER
+---------
+1. Dubbelklik op "Start VR-viewer.bat".
+2. Kies je hoofdmap met VR-modellen (bv. C:\VR-modellen). Modellen
+   mogen elk in een eigen submap staan; de app vindt ze allemaal.
+3. Klik op Start.
+4. Typ de getoonde link in de Browser-app van je Quest.
+   Klik op "Visit Site" als ngrok dat vraagt, en druk op "Start VR".
+5. Klaar? Klik op Stop of sluit de app.
+
+
+EERST UITTESTEN?
+----------------
+Kies de map "voorbeeld". Daar staat een testbrug (stalen vakwerkbrug van
+20 m) waarmee je kunt controleren of alles werkt.
+
+
+DELEN MET MEDESTUDENTEN
+-----------------------
+Dubbelklik op "Maak exe (optioneel).bat". Dat maakt het bestand
+"VR-viewer starter.exe". Dat programma werkt ook op computers zonder
+Python. ngrok en de authtoken moet elke gebruiker wel zelf instellen.
+
+
+PROBLEMEN
+---------
+- "Python is niet gevonden": installeer Python opnieuw en vink
+  "Add python.exe to PATH" aan.
+- Windows toont "Windows heeft uw pc beveiligd": klik op
+  "Meer informatie" en dan "Toch uitvoeren".
+- De app vraagt om een authtoken: klik op "Authtoken invullen…".
+- "Er draait al een andere ngrok": sluit eventuele terminalvensters
+  waarin ngrok nog loopt.
+- De pagina blijft leeg op de Quest: klik op "Test op deze computer",
+  druk op F12, kopieer de rode foutmelding en vraag Claude om het
+  HTML-bestand te verbeteren.
+
+Je hoeft geen firewallregel meer toe te voegen: de app werkt enkel via
+ngrok, dus je computer staat niet open voor het netwerk.
