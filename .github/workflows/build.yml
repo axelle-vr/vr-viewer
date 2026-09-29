@@ -1,0 +1,60 @@
+name: App bouwen
+
+# Wanneer bouwt GitHub de app?
+#  - bij elke wijziging in de bestanden  -> testversie onder het tabblad "Actions"
+#  - als je een "Release" publiceert     -> installatieprogramma wordt aan de release toegevoegd
+#  - of handmatig via "Run workflow"
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Bestanden ophalen
+        uses: actions/checkout@v4
+
+      - name: Python installeren
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: PyInstaller installeren
+        run: python -m pip install --upgrade pip pyinstaller
+
+      - name: Programma (.exe) bouwen
+        run: python -m PyInstaller --noconfirm --onedir --windowed --name "VR-viewer-starter" --icon app.ico vr_starter.pyw
+
+      - name: Versienummer bepalen
+        shell: pwsh
+        run: |
+          $v = "1.0.0"
+          if ("${{ github.event_name }}" -eq "release") { $v = "${{ github.event.release.tag_name }}".TrimStart("v", "V") }
+          "APP_VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Inno Setup installeren
+        run: choco install innosetup -y --no-progress
+
+      - name: Installatieprogramma bouwen
+        shell: pwsh
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$env:APP_VERSION" installer.iss'
+
+      - name: Testversie bewaren (tabblad Actions)
+        uses: actions/upload-artifact@v4
+        with:
+          name: VR-viewer-starter-setup
+          path: output/VR-viewer-starter-setup.exe
+
+      - name: Toevoegen aan de release
+        if: github.event_name == 'release'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.event.release.tag_name }}" "output/VR-viewer-starter-setup.exe" --clobber
