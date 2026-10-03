@@ -10,6 +10,7 @@ Werkt als gewone app (GitHub-download) en als Microsoft Store-app (MSIX).
 Gebruikt enkel de standaardbibliotheek van Python.
 """
 
+import html as html_lib
 import json
 import os
 import shutil
@@ -28,7 +29,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 APP_NAME = "VR-viewer starter"
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.1.0"
 
 # Alles wat de app bewaart, staat in de gebruikersmap (AppData\Local).
 # Een Store-app (MSIX) mag niet in zijn eigen installatiemap schrijven.
@@ -40,6 +41,7 @@ NGROK_ZIP_URL = "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-am
 NGROK_DOWNLOAD_PAGE = "https://ngrok.com/download"
 NGROK_TOKEN_PAGE = "https://dashboard.ngrok.com/get-started/your-authtoken"
 NGROK_SIGNUP_PAGE = "https://dashboard.ngrok.com/signup"
+NGROK_DOMAIN_PAGE = "https://dashboard.ngrok.com/domains"
 NO_WINDOW = 0x08000000 if os.name == "nt" else 0  # CREATE_NO_WINDOW
 
 HTML_EXT = (".html", ".htm")
@@ -182,6 +184,125 @@ class QuietHandler(SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         super().end_headers()
 
+    # Het hoofdadres toont een startpagina met alle modellen (grote knoppen voor de Quest).
+    def do_GET(self):
+        if urllib.parse.urlsplit(self.path).path == "/":
+            return self.send_start_page()
+        return super().do_GET()
+
+    def do_HEAD(self):
+        if urllib.parse.urlsplit(self.path).path == "/":
+            return self.send_start_page(head_only=True)
+        return super().do_HEAD()
+
+    def list_directory(self, path):
+        # geen lijst van alle bestanden in je map tonen aan wie de link heeft
+        self.send_error(404, "Niet gevonden")
+        return None
+
+    def send_start_page(self, head_only=False):
+        body = start_page_html(self.directory).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if not head_only:
+            self.wfile.write(body)
+
+
+def page_title(folder, rel):
+    """Titel van een VR-pagina: de <title> uit het bestand, anders een nette bestandsnaam."""
+    try:
+        with open(os.path.join(folder, rel), "r", encoding="utf-8", errors="ignore") as f:
+            head = f.read(6000)
+        low = head.lower()
+        a = low.find("<title>")
+        b = low.find("</title>", a)
+        if a != -1 and b != -1:
+            t = html_lib.unescape(head[a + 7:b]).strip()
+            if t:
+                return t
+    except Exception:
+        pass
+    name = os.path.splitext(rel.split("/")[-1])[0]
+    for suffix in ("-vr", "_vr", " vr"):
+        if name.lower().endswith(suffix):
+            name = name[:-len(suffix)]
+    name = name.replace("-", " ").replace("_", " ").strip() or rel
+    return name[:1].upper() + name[1:]
+
+
+def start_page_html(folder):
+    pages, _ = scan_folder(folder)
+    items = []
+    for rel in pages:
+        sub = rel.rsplit("/", 1)[0].replace("/", " › ") if "/" in rel else ""
+        title = page_title(folder, rel)
+        if sub.replace("-", " ").replace("_", " ").lower() == title.lower():
+            sub = ""
+        items.append(
+            '<a class="m" href="/{href}"><span class="t">{title}</span>{sub}</a>'.format(
+                href=urllib.parse.quote(rel),
+                title=html_lib.escape(title),
+                sub='<span class="s">{}</span>'.format(html_lib.escape(sub)) if sub else ""))
+    if not items:
+        items.append('<p class="e">Er staan nog geen VR-pagina’s in deze map.</p>')
+    return """<!doctype html>
+<html lang="nl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VR-modellen</title>
+<style>
+ body{{margin:0;background:#1c2330;color:#fff;font-family:system-ui,"Segoe UI",sans-serif}}
+ header{{padding:28px 32px 18px;border-bottom:5px solid #f2b705}}
+ h1{{margin:0;font-size:34px}} header p{{margin:6px 0 0;color:#b8c0cc;font-size:18px}}
+ main{{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:18px;padding:28px 32px}}
+ a.m{{display:block;background:#2a3344;border:2px solid #3a4558;border-radius:16px;padding:26px 24px;
+      color:#fff;text-decoration:none;min-height:80px}}
+ a.m:hover,a.m:focus{{border-color:#f2b705;background:#323d52;outline:none}}
+ .t{{display:block;font-size:26px;font-weight:600}} .s{{display:block;margin-top:6px;color:#b8c0cc;font-size:17px}}
+ .e{{font-size:20px;color:#b8c0cc}}
+</style></head><body>
+<header><h1>Kies een model</h1><p>Open een model en druk daarna op ‘Start VR’.</p></header>
+<main>{items}</main>
+</body></html>""".format(items="\n".join(items))
+
+
+HELP_TEXT = [
+    ("h", "Wat doet deze app?"),
+    ("p", "De app maakt je VR-pagina’s bereikbaar voor de browser van je Meta Quest. "
+          "Ze start een webserver op je computer en een beveiligde https-link via ngrok. "
+          "De Quest heeft die https-link nodig om VR te mogen starten."),
+    ("h", "De eerste keer"),
+    ("b", "Maak een gratis account op ngrok.com (knop ‘Gratis account maken’)."),
+    ("b", "Klik op ‘Download ngrok’. Of download ngrok zelf en kies het met ‘Kies ngrok.exe…’."),
+    ("b", "Klik op ‘Authtoken invullen…’ en plak de code van je ngrok-dashboard."),
+    ("b", "Aangeraden: klik op ‘Vast adres instellen…’. Je gratis vaste adres staat in je "
+          "ngrok-dashboard bij ‘Domains’. Dan blijft je link altijd dezelfde."),
+    ("h", "Een VR-pagina maken"),
+    ("p", "Exporteer je model als .glb-bestand (bv. vanuit Revit, SketchUp of Blender). "
+          "Vraag daarna aan Claude: ‘Maak een WebXR-pagina die mijn model <naam>.glb toont "
+          "op een Meta Quest.’ Je krijgt een .html-bestand."),
+    ("h", "Je map organiseren"),
+    ("p", "Maak één hoofdmap, bv. C:\\VR-modellen, met een submap per model:"),
+    ("c", "VR-modellen\n  vakwerkbrug\n    vakwerkbrug-vr.html\n    vakwerkbrug.glb\n"
+          "  kantoorgebouw\n    kantoorgebouw-vr.html\n    kantoorgebouw.glb"),
+    ("p", "Kies in stap 1 de hoofdmap. Nieuw model toegevoegd? Klik op ‘Vernieuwen’. "
+          "Gebruik bij voorkeur geen spaties in bestandsnamen."),
+    ("h", "Op de Quest"),
+    ("b", "Klik op Start en open de Browser op je Quest."),
+    ("b", "Typ het adres uit het gele vak. Je komt op een startpagina met alle modellen."),
+    ("b", "Klik op ‘Visit Site’ als ngrok dat vraagt, kies een model en druk op ‘Start VR’."),
+    ("b", "Maak een bladwijzer van de startpagina (werkt het best met een vast adres)."),
+    ("b", "Laat de app open zolang je de Quest gebruikt."),
+    ("h", "Problemen"),
+    ("b", "‘ngrok draait nog ergens anders’: kies Ja om de oude ngrok te stoppen. "
+          "Gebruik je hetzelfde account op een andere computer, stop het dan daar."),
+    ("b", "De pagina blijft leeg of grijs op de Quest: klik op ‘Test op deze computer’, druk op F12, "
+          "kopieer de rode foutmelding en vraag Claude om het .html-bestand te verbeteren."),
+    ("b", "‘Visit Site’ verschijnt elke keer: dat is normaal bij een gratis ngrok-account."),
+    ("b", "Zonder Quest testen kan ook: ‘Voorbeeld proberen’ en dan ‘Test op deze computer’."),
+]
+
 
 class App:
     def __init__(self, root):
@@ -273,6 +394,9 @@ class App:
         tk.Label(titles, text="Je constructie in VR op de Meta Quest", bg=INK, fg="#b8c0cc",
                  font=("Segoe UI", 10)).pack(anchor="w")
         self.pill = tk.Label(hin, text="", fg="#ffffff", font=("Segoe UI Semibold", 9), padx=10, pady=3)
+        tk.Button(hin, text="Hulp", command=self.show_help, bg="#2f3a4d", fg="#ffffff",
+                  activebackground="#3d4a61", activeforeground="#ffffff", relief="flat", bd=0,
+                  font=("Segoe UI Semibold", 9), padx=12, pady=3, cursor="hand2").pack(side="right", padx=(8, 0))
         self.pill.pack(side="right")
         tk.Frame(self.root, bg=YELLOW, height=4).pack(fill="x")
 
@@ -288,8 +412,11 @@ class App:
         ttk.Button(row, text="Kies map…", command=self.choose_folder).pack(side="left", padx=(8, 0))
         if example_dir():
             ttk.Button(row, text="Voorbeeld proberen", command=self.use_example).pack(side="left", padx=(8, 0))
-        self.files_label = ttk.Label(b1, text="", style="Muted.TLabel", wraplength=600, justify="left")
-        self.files_label.pack(anchor="w", pady=(8, 0))
+        frow = ttk.Frame(b1, style="Card.TFrame")
+        frow.pack(fill="x", pady=(8, 0))
+        ttk.Button(frow, text="↻ Vernieuwen", command=self.refresh_all).pack(side="right", anchor="n", padx=(8, 0))
+        self.files_label = ttk.Label(frow, text="", style="Muted.TLabel", wraplength=520, justify="left")
+        self.files_label.pack(side="left", anchor="w", fill="x", expand=True)
 
         # Stap 2: ngrok
         b2, self.badge2 = self.card(wrap, "ngrok (voor de beveiligde link)", 2)
@@ -301,7 +428,10 @@ class App:
         self.dl_btn.pack(side="left")
         ttk.Button(nrow, text="Kies ngrok.exe…", command=self.choose_ngrok).pack(side="left", padx=(8, 0))
         ttk.Button(nrow, text="Authtoken invullen…", command=self.ask_token).pack(side="left", padx=(8, 0))
-        ttk.Button(nrow, text="Gratis account maken",
+        nrow2 = ttk.Frame(b2, style="Card.TFrame")
+        nrow2.pack(anchor="w", pady=(6, 0))
+        ttk.Button(nrow2, text="Vast adres instellen…", command=self.ask_domain).pack(side="left")
+        ttk.Button(nrow2, text="Gratis account maken",
                    command=lambda: webbrowser.open(NGROK_SIGNUP_PAGE)).pack(side="left", padx=(8, 0))
 
         # Stap 3: start
@@ -314,7 +444,7 @@ class App:
                                       wraplength=440, justify="left")
         self.status_label.pack(side="left", padx=(14, 0))
 
-        ttk.Label(b3, text="Kies een model:", style="Card.TLabel").pack(anchor="w", pady=(12, 4))
+        ttk.Label(b3, text="Links:", style="Card.TLabel").pack(anchor="w", pady=(12, 4))
         lb_frame = tk.Frame(b3, bg=LINE, padx=1, pady=1)
         lb_frame.pack(fill="both", expand=True)
         self.links = tk.Listbox(lb_frame, height=5, font=("Segoe UI", 10), activestyle="none",
@@ -424,6 +554,12 @@ class App:
         if exe:
             txt = "✓ ngrok gevonden."
             txt += " Authtoken is ingesteld." if token else " Vul nu één keer je authtoken in (van je gratis ngrok-account)."
+            domain = self.settings.get("vast_adres")
+            if domain:
+                txt += "\nVast adres: " + domain
+            elif token:
+                txt += ("\nTip: stel een vast adres in. Dan blijft je link altijd dezelfde en werkt een "
+                        "bladwijzer op de Quest ook de volgende keer.")
             self.dl_btn.state(["disabled"])
         else:
             txt = ("ngrok is een apart, gratis programma dat de beveiligde link maakt. "
@@ -431,6 +567,47 @@ class App:
             self.dl_btn.state(["!disabled"])
         self.ngrok_label.configure(text=txt)
         self.set_done(self.badge2, bool(exe and token))
+
+    def ask_domain(self):
+        if messagebox.askyesno(APP_NAME,
+                               "Met een gratis ngrok-account krijg je één vast adres "
+                               "(bv. jouw-naam.ngrok-free.app). Je vindt het in je ngrok-dashboard "
+                               "bij ‘Domains’. Staat er nog geen, klik daar dan op ‘+ New Domain’.\n\n"
+                               "Wil je die pagina nu openen?"):
+            webbrowser.open(NGROK_DOMAIN_PAGE)
+        current = self.settings.get("vast_adres", "")
+        value = simpledialog.askstring(APP_NAME, "Plak hier je vaste ngrok-adres.\n"
+                                                 "Laat leeg om geen vast adres te gebruiken.",
+                                       initialvalue=current, parent=self.root)
+        if value is None:
+            return
+        value = value.strip()
+        for prefix in ("https://", "http://"):
+            if value.lower().startswith(prefix):
+                value = value[len(prefix):]
+        value = value.split("/")[0].strip().lower()
+        if value and ("." not in value or " " in value):
+            messagebox.showerror(APP_NAME, "Dat lijkt geen geldig adres. Het ziet er ongeveer zo uit:\n"
+                                           "jouw-naam.ngrok-free.app")
+            return
+        if value:
+            self.settings["vast_adres"] = value
+        else:
+            self.settings.pop("vast_adres", None)
+        save_settings(self.settings)
+        self.refresh_ngrok_status()
+        if self.running:
+            messagebox.showinfo(APP_NAME, "Klik op Stop en daarna opnieuw op Start om het nieuwe adres te gebruiken.")
+
+    def kill_other_ngrok(self):
+        try:
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/IM", "ngrok.exe", "/F"], capture_output=True,
+                               creationflags=NO_WINDOW, timeout=15)
+            else:
+                subprocess.run(["pkill", "-x", "ngrok"], capture_output=True, timeout=15)
+        except Exception:
+            pass
 
     def download_ngrok(self):
         if not messagebox.askyesno(APP_NAME,
@@ -527,7 +704,7 @@ class App:
         self.ngrok_output = []
         try:
             self.ngrok_proc = subprocess.Popen(
-                self.ngrok_cmd(exe, "http", str(self.port), "--log", "stdout"),
+                self.ngrok_cmd(exe, *self.tunnel_args()),
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                 encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
         except Exception as e:
@@ -541,6 +718,16 @@ class App:
         self.set_status("Bezig met opstarten…")
         self.set_pill("Opstarten", "#a77d00")
         threading.Thread(target=self.wait_for_url, daemon=True).start()
+
+    def tunnel_args(self):
+        args = ["http", str(self.port), "--log", "stdout"]
+        domain = self.settings.get("vast_adres")
+        if domain:
+            if self.settings.get("ngrok_oude_vlag"):
+                args += ["--domain", domain]  # oudere ngrok-versies
+            else:
+                args += ["--url", "https://" + domain]
+        return args
 
     def start_server(self, folder):
         # webserver: alleen op deze computer bereikbaar, ngrok maakt de rest
@@ -619,36 +806,57 @@ class App:
 
     def on_url(self, url):
         self.public_url = url.rstrip("/")
-        self.set_status("✓ Actief. Kies een model en typ de link in je Quest.", GREEN)
+        self.set_status("✓ Actief. Typ het adres in je Quest: je ziet daar alle modellen.", GREEN)
         self.set_pill("Actief", GREEN)
         self.set_done(self.badge3, True)
         self.fill_links()
 
-    def fill_links(self):
+    def fill_links(self, keep=None):
         self.links.delete(0, "end")
         self.link_targets = []
-        files = self.html_files()
-        if not files:
-            self.links.insert("end", "  (hoofdmap)")
-            self.link_targets.append(self.public_url + "/")
-        for f in files:
+        self.links.insert("end", "  ★ Startpagina met alle modellen")
+        self.link_targets.append(self.public_url + "/")
+        for f in self.html_files():
             self.links.insert("end", "  " + pretty(f))
             self.link_targets.append("{}/{}".format(self.public_url, urllib.parse.quote(f)))
-        self.links.selection_set(0)
+        idx = self.link_targets.index(keep) if keep in self.link_targets else 0
+        self.links.selection_set(idx)
+        self.links.see(idx)
         self.show_selected()
+
+    def refresh_all(self):
+        self.refresh_files()
+        if self.running and self.public_url:
+            self.fill_links(keep=self.selected_link())
 
     def on_ngrok_failed(self):
         out = "\n".join(self.ngrok_output[-15:])
+        low = out.lower()
         self.stop()
-        if "4018" in out or "authtoken" in out.lower():
+        if "unknown flag" in low and "--url" in low and not self.settings.get("ngrok_oude_vlag"):
+            # oudere ngrok kent --url nog niet: opnieuw proberen met --domain
+            self.settings["ngrok_oude_vlag"] = True
+            save_settings(self.settings)
+            self.start()
+        elif "ERR_NGROK_4018" in out or "authtoken" in low:
             self.settings["token_ingesteld"] = False
             save_settings(self.settings)
             self.refresh_ngrok_status()
             messagebox.showwarning(APP_NAME, "ngrok vraagt om je authtoken.\n\n"
                                              "Klik op ‘Authtoken invullen…’ in stap 2 en probeer opnieuw.")
-        elif "108" in out or "already" in out.lower():
-            messagebox.showwarning(APP_NAME, "Er draait al een andere ngrok (bv. in een terminalvenster). "
-                                             "Sluit die eerst en probeer opnieuw.")
+        elif "ERR_NGROK_108" in out or "ERR_NGROK_334" in out or "already online" in low or "simultaneous" in low:
+            if messagebox.askyesno(APP_NAME,
+                                   "ngrok draait nog ergens anders, bijvoorbeeld van een vorige keer of in een "
+                                   "terminalvenster.\n\nWil je die andere ngrok op deze computer stoppen en "
+                                   "opnieuw starten?\n\n(Gebruik je hetzelfde ngrok-account op een andere "
+                                   "computer, stop het dan daar.)"):
+                self.kill_other_ngrok()
+                self.root.after(1500, self.start)
+        elif self.settings.get("vast_adres") and "domain" in low:
+            messagebox.showwarning(APP_NAME, "ngrok aanvaardt het vaste adres ‘{}’ niet.\n\n"
+                                             "Controleer het adres in je ngrok-dashboard (Domains) en pas het aan "
+                                             "met ‘Vast adres instellen…’.\n\nMelding van ngrok:\n{}".format(
+                                                 self.settings.get("vast_adres"), out[-600:]))
         else:
             messagebox.showerror(APP_NAME, "ngrok gaf geen link.\n\nLaatste meldingen:\n" + (out or "(geen)"))
 
@@ -684,7 +892,7 @@ class App:
     def show_selected(self):
         link = self.selected_link()
         # zonder https:// – dat hoef je op de Quest niet te typen
-        self.big_link.configure(text=link.split("://", 1)[-1] if link else "—")
+        self.big_link.configure(text=link.split("://", 1)[-1].rstrip("/") if link else "—")
 
     def copy_link(self):
         link = self.selected_link()
@@ -711,6 +919,42 @@ class App:
             html = self.html_files()
             path = "/" + urllib.parse.quote(html[0]) if html else "/"
         webbrowser.open("http://localhost:{}{}".format(self.port, path))
+
+    def show_help(self):
+        if getattr(self, "help_win", None) and self.help_win.winfo_exists():
+            self.help_win.lift()
+            return
+        w = tk.Toplevel(self.root)
+        self.help_win = w
+        w.title(APP_NAME + " – Hulp")
+        w.configure(bg=CARD)
+        w.geometry("620x640")
+        try:
+            w.iconphoto(False, self.logo)
+        except Exception:
+            pass
+        frame = tk.Frame(w, bg=CARD)
+        frame.pack(fill="both", expand=True)
+        t = tk.Text(frame, wrap="word", bg=CARD, fg=INK, relief="flat", padx=20, pady=16,
+                    font=("Segoe UI", 10), spacing1=2, spacing3=4, cursor="arrow")
+        sb = ttk.Scrollbar(frame, orient="vertical", command=t.yview)
+        t.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        t.pack(side="left", fill="both", expand=True)
+        t.tag_configure("h", font=("Segoe UI Semibold", 12), spacing1=14, spacing3=4)
+        t.tag_configure("b", lmargin1=8, lmargin2=24)
+        t.tag_configure("c", font=("Consolas", 10), background="#f4f5f7", lmargin1=16, lmargin2=16)
+        for kind, text in HELP_TEXT:
+            if kind == "h":
+                t.insert("end", text + "\n", "h")
+            elif kind == "b":
+                t.insert("end", "•  " + text + "\n", "b")
+            else:
+                t.insert("end", text + "\n", kind if kind == "c" else ())
+        t.insert("end", "\nVersie " + APP_VERSION + " · Ontwikkeld in het kader van de masterproef "
+                        "‘VR als leerhulpmiddel in bouwkundig onderwijs’ (UGent).", ())
+        t.configure(state="disabled")
+        ttk.Button(w, text="Sluiten", command=w.destroy).pack(anchor="e", padx=16, pady=10)
 
     def on_close(self):
         self.stop()
