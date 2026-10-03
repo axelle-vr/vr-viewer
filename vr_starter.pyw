@@ -2,11 +2,12 @@
 """
 VR-viewer starter
 -----------------
-Kies je hoofdmap met VR-modellen en klik op Start.
+Kies een map met je VR-pagina's (HTML) en klik op Start.
 De app start zelf een lokale webserver en een ngrok-tunnel en toont
-de https-link die je op de Meta Quest opent.
+de https-link die je op de Meta Quest intypt.
 
-Gebruikt enkel de standaardbibliotheek van Python (geen extra installaties).
+Werkt als gewone app (GitHub-download) en als Microsoft Store-app (MSIX).
+Gebruikt enkel de standaardbibliotheek van Python.
 """
 
 import json
@@ -24,45 +25,102 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 import tkinter as tk
-from tkinter import filedialog, messagebox, simpledialog
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 APP_NAME = "VR-viewer starter"
+APP_VERSION = "2.0.0"
+
+# Alles wat de app bewaart, staat in de gebruikersmap (AppData\Local).
+# Een Store-app (MSIX) mag niet in zijn eigen installatiemap schrijven.
 DATA_DIR = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "VRViewerStarter")
 SETTINGS_FILE = os.path.join(DATA_DIR, "instellingen.json")
+NGROK_CONFIG = os.path.join(DATA_DIR, "ngrok.yml")
+
 NGROK_ZIP_URL = "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip"
+NGROK_DOWNLOAD_PAGE = "https://ngrok.com/download"
 NGROK_TOKEN_PAGE = "https://dashboard.ngrok.com/get-started/your-authtoken"
 NGROK_SIGNUP_PAGE = "https://dashboard.ngrok.com/signup"
 NO_WINDOW = 0x08000000 if os.name == "nt" else 0  # CREATE_NO_WINDOW
 
-# ---------- kleuren en letters ----------
+HTML_EXT = (".html", ".htm")
+MODEL_EXT = (".glb", ".gltf")
+MAX_DEPTH = 3  # hoe diep de app in submappen zoekt
+
+# kleuren
 BG = "#eef0f3"
 CARD = "#ffffff"
-BORDER = "#dde1e7"
 INK = "#1c2330"
-INK_2 = "#2a3342"
-MUTED = "#5f6878"
-HEADER_MUTED = "#9aa7b8"
+MUTED = "#5b6475"
+LINE = "#dde1e7"
 YELLOW = "#f2b705"
-YELLOW_HOVER = "#ffc62e"
-YELLOW_SOFT = "#fff6d6"
-STEEL = "#8fb0d1"
+YELLOW_SOFT = "#fff4cc"
 GREEN = "#2f7d4f"
-GREEN_SOFT = "#e3f2e8"
 RED = "#b3261e"
-CODE_BG = "#f3f5f8"
 
-FONT = "Segoe UI"
-FONT_SEMI = "Segoe UI Semibold"
-MONO = "Consolas"
-
-LOGO_HEADER = "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"
-LOGO_ICON = "iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAAgAklEQVR4nO2deZQf1XXnP/dV1W/vRVJbEtrRAgghtCAQIIzABoHYF/cYx4lPbM9JTuwkJ+MzW3I8Cck49mQce+yJz4wnM46N7czgNJjVgJFYlCCMQEuD2LUvCLR3q/u3V707f1T9Wi2pt18vajXd33N+p+Gnqrr1u/e+++723hMGBgcagaag8sWMectmW/zlqlwtlgUKMxDGCYwfIK1RBYVjKMcF9qrhLRFeNrgb9m7buPPkVY0ONAEE3T2nN0g/7zPRXwswfe5lc1T0HrF6q6ouEWNqRQRVBRTV6CeNoQoIIpW/IS/V2hMiskWN/EpUfrlv+6Yd0cWnyKM6KlVf32gqI37q3KVXCvwJqncZx4lHLwmoBVXCnyAn7x1DFdCTfyu8FCPGICLYICgi8qjC9z7YvvmV8NJGB5osVYy2aoRiiDRsyrxFi42Vr4vIvSIGawNQ9REExFT53DH0HQpqURQR1xgHVYuqPmyNfuPAttebo+s6ZNUbTO+XQKhZWFjpTp2z6H5jzSvGOPeqqtrADyB8IRCHMeEPJQTECXmN2sAPVFWNce411rwydc6i+2GlC9hIZn15YC9YudJl3Tp/2pwlcxF+YoyzwgY+qAaI9InIGIYYkSyM42JtsB7ld/fv2LK9Iruebu1ZAaIHTD9/8Y048qCIGW8D348EPzbSzy0oqoFxXFfVHiPQ+/btal7TmxJ0PwVURv7sS+/DMc8A423gB5H5GRP+uQdBxI2m5PE45plpsy+9j3XrfFaudLu/qSt0Er4Y9/+pWhs6ltJHn2EMwwu1oT4Yo9b/3P6dbzzYnSXoQgEaHWgKppy/8AbH8daEwgf67DCO4RyBBRAxJgjKNx7YtXVtRbadLzpdAQxgJ81cNMvzzBaBOg2zOWPCH5mwIiIKreWyXXJwz+u7OS1E7CxYobFRYKXrufKgiKlXay09CN8IOEb79TFjKtWBAfGxZ2/MqLVWxNR7rjwIK91QxicHfqfbQ/MwbfbivzCue7/1y37k8HX9ZAP5olAOpGqPUKMfnYpbRIhSxaMPUaaXXNEQ2Oo9awVcB1Ixi+2Jh6q+cT3X+v79+3c2/2XnqaBC0wA6fc6iixXTDCrRd12+kwi0FwwXTS0wvaFEYKt7dSOQKxk270ihCp6ro04JBAgUyr6wZHaeurSPrZKPjlEOtXps3ZMkGesx8aeABVHBLt634/W3o1ew4QhvbBSamqxVvuk4xo1i/S7fxojSVnD4vVVH+PPPHiDmVi85BRwDv95Sy1d/OIOiLzhmdFkCBVSF73xpP7917TGs9i+2tgo/+NVEvvXQeaTi3VoCQVWN47hBYL8J3Eljo6GpCamYgxlzFl6m4r7Wk9NnBPIlYe55Rdb+1fuIQLFsEKlectYK4yaU+M8/ncq3H53M+IxftSUZqXCM0pJ1ue+Tx/jhH++mpcVD6IcGaDgV16QC7vzrubz0doZMMujJklgREVH/8r07tm6CRsfQGP0L5k9FjKDarS0RUcqBML2hRMxVimXpcESq/YiAX3C4YEpx1GWVBPAtXDClQFA2WEJBVs1HA34gqML5k4r4vfljqlbEiMX8KQCN4NLUFEyauWgWyO3WBtpbfj98eQnTQqdRsxqatb7At4Ibt+w/6oXFzj7d9fGAAo7AviMxnJhF2xyCPnJAODWCkspgCvpwv4hjbaAgt0+auWjWwaam3S6A6/BZ47ix3jz/ky9xpsBUIR23uJ72Xo1WwFE2vZPhH55rIJOwBH1UnI8DrBVqkgGPvFLP6qWtrFrWCoH0aRTYQGgvmjMu7dpjOwMSRQQxV8ufBf7Gje6+LRqG/ZKCVSEVD/jZugm8/HaGVCLAdifQaN7KFYXn36ilvWBIeNpzGPMxgxLyoFg2fPkHs/jUpW3UV6KAbthmRMmXDBdPK/AHqw9TLEtfhX4qBIn6S24D/sadNX/JTL+oi8OcT/9y/argecr6dzL86NkGxtX07NBVpo9MIhh1wq+gc/j72Ib6XqMAxyitWYdVS0/wR7ceotDf0YoYay2iLJ41f8lM1y/q1eKYjNrADqjYE00B42p8xvXRo7cqo1L4FVTC3vp0jyV74GSmsCZpB9pdKWCtOE7GL9qrXYUVJgxCBiwKqxBY6fiMoW/oK68CK9iq2z67hAqChRUG9JIw9O/XjDKGEQmRqGP7EheR6RoO/nNaARyjoYpW7FRoyPo8hXR1v+rJ0SdRQaY3O9jRqjuypy9RFESmu4yABRuqcKzd7ZgzhXC6SScsca/3OoIItOWdUzznihOWSdgooylkC06vdlAIPaWYoyRiFsfoSJ7uxrsC9REHz8lfYSPn8vdvPkws8pqtCsmY5ZnNtWzemSYV6z7srKSv71zewsKZefKlMIaOeZZ9h2M0rR+Pb2HhzDy3XNZKoWww3aS2rQrZguFQq8eOj+K8/0Gc4+0udemAQXGizh4EVQTqe036DDccA605h5uWnOCKRW2Qi4qUmYA5k4t84XsZJE6X3BcgsJBJWO7/3AFmTC1AyaAqSE3AD34xmVwpVJyFM/N87fMfQrsDpgdRhoudyBYctn8Y54EXJvDzF8cT8zQsqQ4+C4YU57wCGFHyRYcfr21g6ZwcLe1uGBLlDMsvyHL+pCIfHvc6rMMp9xrlRNbltstbmDKuzNEjsY46hG13+L/rxpPwlEJZKJYFv9WhJRc+HwCtpLc7v0+YxHGMMn96ge/+/l4umZHnPzwwjWTcjjgN6Ffc31UTR8dCsEGGVSGdtPzL2xkOHvdIxwMco1gVJo0r86mFbeSK3ZttgFsva8V1FScquNSmAjbvSPH+gQTJuMXa0DdwHcU1Jz+eo0yo8Wmoiz71PjWpoKP6mS8Kx497fOmmw9x+RQsncs5J5RkiDDbvq7YAEs2pjhN60CphZUscJV80g64EqhB3LfuOxHhhaw2/ff1Riu1u6Aha4ZZlrTzwwoQzilCVUvW0CSWuXdBOvhAqiVXBGOWJ1+op+dJlS5VqOMILZcM3fzaVlpyD5yjj0gG3Xt7Koll58iXBmLD/1gahj/HIK/WD++NPw1DwvioLEFghFbds3pHm11tqGT+hRG0yoGFCiU3vZ3j+jRrSPdUBBgBjlMdfqw9LngJilFzBcPncLPOnFciXzCnCNKLkioaVl7QxtaFE0Q9/aty1HDgaC981bgm6SayIQDkQmtaP58fPNfDA8w387aOTuOdbc3hzT7KjDUtECXxhRkMpet7Q+NJDxft+WQBV+OoPZ/C729LMnVrgwJEYP35uwpAVdgIrpOOWDe+leW9/gnlTiuRLgq9CfY3PqsUnaN6VJBXXqJsNFMF1lFsva+3InlkVkomARzZk2Hskxri032MIKYRp2lxJiLnhtPBRi8eLb2ZYOi+LLQpGFEXwnHCKCezQpdSGgvdVK0Alfi76wt8+OgmJvksn7ZAWdlxHOdrm8szmWhbMOkiu6CKi+GXh5qWt/M9nPtHRCSMChZIwZ3KRKy/Mki86GBM6iUEgPPFqfY8+Q284RcAaWqfjWZd8SUjEhq6/cSh43+/qn2NgfCYs/Iyv8fGcoa3qqQoJT3lqUx3ZyNkSCTtqF87Ks/j8HNmiiTprwjnxhkUnGF/nU466ZpKe8v4HCX7zXqZP5lqBlqzLsXaXlnaXA8djjMsEXH9JG6VSOPp9a3BjlpffTVMo9eyMDg4fBpf3/Q4DVTmrTRxWIRm3bN2TZNOOFCvmt9OeN1iERDxg9WWtvPR2BiNhZi4Zt6y+7ASBL4goqkIsHvDMllqOtTmM761kreA5SuOKYyedwEzAbctaWTAjT64Ujp0JtWW270vyk+cayCTtkPg/Xb3bYPH+nM8DdIYRpVB2eOK1Oq69pA0lHIXFaLR/97FJBIGQLxsWzsyzdHaOXNQ9Y4ySyxt+tbGOmKc9tq6JhP5C3FW++TsfnLLHSbkk5Eqhx+05ysZtaf74f0/nyAm3p67ccxYjan1O2HlkWft6LYdaPGKuRYBCWZg3pcjyC7LkS4ayL9y8pJV0KgjDJejwoLfuSfZZUAocbXM50hp+jp1wQ+ETCv+nL0zghj+/gO0fxiMPfGh//1BgRCmAKiQ8y+6Dcf7lrUyYxFFBNfL4l7VS8oX6tM+qJScol06af8dRntxYR76XpFFniMCE2jAB1FDnh4sv9GQT5n2fPMZf//YHHRZjJGJETQEVKPD4q/XcfVULcNLp+9TCNurTAZfMLHDxjHyYHCGMIA63eqxpriGV6H2e1sizL/mGv3tiIifyDp+oC8PNqRNK5Aqmo437q3cd5HCry397fFKfO6HOJYw4BbBWSMcD1r+bYcdHcWY0lCiWhWLZMHViiSsvbGfZ3ByxuCVXCDvcaxI+zzbXsvNgnLpoWugNRqBUFr7/xCQ+OObhOcq0hhI/+ze7uHRWnlwh9APaWl2+dudBnm2uZfuHcZKxkdXjOKKmAAhHv+cqh1pc1jTXEo+FI7qSE/i9m45w85ITlApOh6lXFR5/ta7PaxYqEIFxGZ8JNT4T630OHIvx734ynWI5tACVqaA2HfCV1Yf7vUpqODHiFABCgXqu8uRrdR2xtxHIFQxXX9jO7MlFCuVQ2AnPsutgnJfezoSOWpUmOrCCb4WSL4zL+GzcnuKR39RTE1kS11Hacw53XNHCpbNy5IpOb0u2zymMSAWodANt2ZnijV2pDq++kr8PtNI1JCQSljXNNRxsDc34QMantULcU360toH2TpU/34ZW4Es3HKVQlhFlBUakAkDo+GULhic31uJ62uHYSae1FZUcwZMb6yLhD2xoht1JAc27Ujy5sa7DCjhGac873H1lS5gkKpoRYwVGrAKohtm+Z5vrONbqYlD8IDTXFZMd85Ste5Js3pEmHbc9tlSrcsr9ftB1a3sl5PzR2gayBdNxX6FkqE0FfOG6Y2SLzpCnhAcLI1YBrEIiZnn/gzivbU9RN7HMuEwQLkyp8ZlQE5AY5/PUpjra8qbHRg1ViHuKWxfQUBPm12trfcZn/DNGstVwRdNr29Ks2VLLuEklxmUCGurKGDfsXbxiXjasS4wAKzDiwsBToOA48P0nJvH2/uQZSR5j4JFX6kn3sPi0okhb9yT57j+eR6FsOlbglspCW9RI0rnCZ1WIuZbvPDaZnQfjHd5/JVNZkwyiiOPctwIybc7ic/8te0Cl9FuZd0//MTVJi+v0XKI92RZ+aleNCNQkgy5HsgiUfKE9f/KeSrt6Km6HtCw8mBjZFoDQfCdjSjrhnyl9iVqnelvsEU0BqXinZ5y2cKSre2Ku8om60+j2kea5ghGvABCOOtuXDRJ6QMWZG+p7zjWMWCdwDIODMQUY5RhTgFGOYfcBKtsRKmd3cWJnesNKe5i9xWFVABFD4JdRtcgwbB6sUd1WhiFjo9GeMK4b62lnviHHsCmAiFAq5qkd14AXi1PMZ8+qEqhVvHgcEUOpkD+rSqBWicUTKMrxwx+F/z1MlmBYFMAYQyGfY/7Sq7j9C3+IqlIuFUMhnA0+RA31rhdDRCiXitGqi7NH23E9vFictQ8/wGvP/4pEKo0dpP1fqsHZVwCBIPBJpjKsavwSyXSGUrFALJEAKmZ5qBdYmjDRE9Hy4sNB22Icl0/f8wW2v7mZE8eO4HreWbcEZ10BjDjk8u0sv+12xk86j2zbCRzHwfp+2O0Ti2McZ8h2jlZVSsVCx1btIOiw0BbKxQLJTC1X3XgnT/78f+DFYh9vBRARfL9E3YSJXPGp2ygVCxhjOtY3O8bhwO5t5NrbcByHgbVvnEYbwVpLLB5nyqx5nRg9fLTFGIr5LItXfJrN//xrDh3YixeLn1UlOMsKYCgW8lx/5+epmzCRXFsrjhseQhYEPvFEisMH9vLQ33+bZCozqHOiMQ659lZWffZfM+uiS8ln23EcBzDDRrsSBSUzNay45TM89L/+KzE5uw7hWVOA0NkqMGnqTJZccyPFfBbHdSmXiqi1xBIpCvksi67+NG+88iJ7t71NPJlCB0EQIoJfLjNt9kVcecMdlAoFjHGGnba1lngiRSGXZf7Sq5l14UL2bnuLWGJwaPcFZy3uEjGUS0Wuvulu0rX1lEtFkplaXnvhaV547B9JZjIEgY9xHFas/gzW2vDE7EH4QBhyXrXqTlKZWsqlAqma4af9YifajutyzS2fQYfeDz0FZ0UBQtOfY/rc+VxyxbXks2148QQtRw7S/NIa3nhlHR/t3RmOhmw7cxcs4cLFyynk2kMfYdTQXhrSzg+cdl9xlhQAVC0rbr6XWCJJ4Pskkmk2vvg0x48cpFwq8vIzj0QOULgX7jWr7w3/f4CmcLTS7iuGXAGMMRRyWeYsWMpFS64in20jnkxy5MN9bHzxaWKJJPFEkq2vrmPvtrdIpGsoZNuYMW8BC69YST7XjjH9O6N6tNKu6j2HmoCq4rguK26+NxwR1uLF4vxmzWO0tRzFcdyObNxLTz8c7sQZ+QtXrbqLdE0dQdD7btpjtPuHIVWAyii4aMmVzL54EflcO/FkmgO7t9O8/jkSqQzWBlhrSSQzvNe8ge1vbSaRzlAs5Jg8YzaLV9xAMZ+tejSMVtrVYkgVIAxzkqxY/RkCP9Rmx3VZ//TDlAr5Ux2daAPHl556iMD3cRyHYj7HlTfeQd2Eifh+qbuT7MZoDwBDpgCVUXDpVdcz9fx5FPM5EqkMu9/dyjubXz6j+KFRTLz7vcq/hzWCcQ2Tufy61WHFro/nWYxW2v3BkD05CHzStXVctequjkqfAC891UR351KqKo7jsv6phygV8rieRyGfZdl1t9Bw3vTwOX0YDaOVdn8wJApgTGjGll23mobzplMs5Emmani3eQM73tpCvJvSp2pYJz+wdwdbormyXCqdytBeGDFaafcXg64AlYJPfcNkLr/uFkqFPI7j4JdLvPzML3u9X1XxvDgb1jxGe+txvFisw6ROOX9eWE3rhhmjlfZAMAQKYDqcmPqGiZSKeZLpWrZuWMeebW/1mmNXVbxYnCMf7ee1F58ikcrgl8vEE0muiZyq7oUwOmkPBIOqAJWCTxjGfJp8Lovrxci1n+A3ax7DdfvW8KBqiSWSbHrxaY4ePEAskaCQbeeiJVdy/vxFFPK5M9rHRivtgWKQFSBKZNx4F+maevxSkWS6huaX1vLhnu3EEsk+MkJx3RgtRw+zYe3jxBMpgiDAdV2uWX3vqWf/jHLaA8WgKUCl8DFj3gIWLl9JPttGLJ6g5eghNjwX/phq8tvWBiRTaZrXh0xMpNLksu0dqdXOxZrRSnswMIgKEJqwq2+6Gy8eJ/DDJouNkTlzverbnYzjnmJGiUqsFRoVj3q00h4MDIoCVJIfc08rfBz+aD8bX3wqSn4EVT/X2oBkuqbDkUqkMxRybR2jrZBrx3G9UUl7sFLEg6IAlcLHNbc0dnS8erE4r6x5jPbWFhzH6/ezw46aMJTqXDC5+qZ7SNfWE5RLOJ43+mgH/qAsZxqwAlRG//ylVzProoUUosLHB7u2RYWP/o2CCsKCSZp3mzewbeumjoLJpKkzuezam2g5eogFy65h1oWjh/aSSqFIBm4FBqwA1oahy4rV955W+HjozMJHfyESFUyaThZMinkuv/5WJs+cw/Ibbu9g9seediHP8hvvHLRC0YDe0hiHQi5sa54yay7FfJZkuobd727lvddfJZmpCRdCGjOgD0AilWHf9nd4Z9PLJNO1+KUSqUwN933lz5gwaWqYdh0FtEvFAvWVtvpBKBQNqCs4CMpk6uq58sY7KZeKGOMQlMs89/AD5NpaiSfTg9baJCacA59/5GfMWbAY14sTBAETp80i8MuAjAraXixGMZ/lsmtvovmltbQcPTSgFUX9VgBjHLJtbVy16m4aJk8je6KFeCrFh7u343gxFiz75CD3tytiHIqFLPt3vsfchcsoFXL45RIQrur5cM/ooF3ItpOurePqm+/m0R9/f0Arivq1S1hY+ChTN/4TfPHffyvscAn8jtOUvFi8Xy/TN+JQLpW6Xb41mmgLwk+/+584sGsbXrx/K4r6ZQHEGPxymdnzFzF+4nm0Hj8arbIJUSoWwr74Ieps7WkpdyGfHdK++uGgLUYQMac4fEHgUzuugQsXX8G+7e8QN6l+9RBWrwAiBH4Zv1Rk2xsbObh/NzX1EwiCU6tVXixGLN63HPgYukelcbRcKp7yvet6tB49xNsbX6ZUzOPFE+Gaxir5XdUUUHmZSVNncdVNd5HLtjFl5lymzJyL75cRkaisGePA7h282/wKXj9SoWMIESZ/Cpx/0aWcP38R5VIBERMVjTwOf7SPPe+9Raa2jk3//Gt2v/dm1ZtNVGcBRLC+T039BJZdt5pyqYhfLlEunYxHK3Xtj/bu5Nl/+hHpTO2wbHzwcUDoaLew6l99mQsWXUGpmA93Q4+s8CcmT+e86XNIpjPsfv9Ntr+5hXgfK48V9GsKsIFPrv1EtLzbOSMZoaq4nke6tp5UqmZMAfoJYxwQul4yHjnixWIBVYtfLvcrKdQvJ7Dzq6jaU5xiay02CMK+98rfMQXoN0IenuTpmdABOZ7VK0BU+EnX1BGPxzCRV1zZH9daS7qmdswBHCRUptR0bT0IkcUND8MQARtYEqm6fieDqlMAVRwvRsvhj1jz0E9oaQuPaTVGqUlaHFECC7F4jAO7t485gAOEalhd3PXuGzz7T/+HUrHYMeBO5BwCK4hYxte6HNy7s1+7i1SdCBKBcjmgkM9zx/JW5k4JjzD/5SvjKJXDw5ysDXfgGs7tzz4u6BwGigjWhucV3HFFS8fx8b/8TT1qkiSTHrbKM+v65QMEePzgDw/z+VXHoGQgluPeV+HLfzcremmwVhnODRA/LqhMAbFEEkEplA3f+eL+M3j/pf9eSxBol2cm9ISqSklGlFzRsOT8LPddc5iWo4bjJ4Sjhx1uWHKM6y5poTULqD8m/EGEqoL1ac/DopltXfL++oUnaC84mB6OxukKVVmAcGRDXerkMW2OCf0ADYT6TDBUO6yNegwV7/tVTK6cy3f6CwZjg37IMdi875cCdJduGNlnZ4wMDDbvx84LGOUwCi1RHX9s9h49UERQaDHAseF+mzEMG44ZVPeFWxiMWYBRBJXwXLx9BuTNsIo0FsCNHqiGMpc3jcD6aGfsATvxJopN+/IZhhNizllUxbfBCbUkOkt9vevG5WW/aNsRk4msQP9ICORLQmvO6UhQdAcl/NGpuI0WV/bvV4x0VM4syBYNge2Z8Y5RWnMO2eKAR46CMRrYdjcuL7u739myZ+qcxc2OMddY61uofr2RCAS+cPH0AjctOUEmGWB7UAAjkCsZNu9IoQqeOzLO2R1MCGFSp1wWLpuToy7t98wzo+QKhiWz81grAzDXao1xnMAGzbvf2bInTAWrPonINUR2oVoYUbJFwx/cfJg/uvVQr8JUwDHw6y21fPWHMyj6gmNGlyVQQFX4zpf281vXHsN2keE7HWHGTyiWhX40/1QIa2R2n4SoFuAH/ELE/ytEPPpwjF5XchLCE7gL5b69mbXC6quO88VtKb796GTGZ/xuj3j/uMExSkvW5b5PHuN3bjxCS4uH0AcNgGil8Jnf93HwKCKODfySH/ALAENjo3Nwz+u7QZ8wxhFUe13S6kYVpy7a1DB9/IiAX3C4YEpx1KWQBfAtXDClQFA2WMCYvvPtdKiC6/RBA1QDYxwBfeLgntd309jouDSF/2aw31K19/S02lBVcBw41OqhGppxP+ifOfKt4MYt+4+GzxpNSqCAI7DvSAwnZtE2h2AAHBAHPjru4fRWChYxqlYN9lsANFX43tjo0NQUTJ296DHHce+w4Z5kXZaKjUC2YPizxg/52l0H+3fuqgKOsun9DF/43iyOt7m4o8gRFMIj711H+fuv7GHVslYIpJ98hJ8/P4F/+w/TiLk9HHWl6hvHdYPAf/yDna/fWZF5haQBdPqcRRcrphlUou+6faVCybBifjuzJhUJqnl5Dc1drig8/0Yt7QVDwlOq7GQa8RCBsi+4jvKpS9uor0QBVfDRcZSPjnu8+GYNjig9nHingAVRwS7et+P1t4n0sBO5RgeagmmzF/+Fcd37rV/u1gpAaAnaC4ZyUH1IooQMyCQCXMOoE34FlRxIW97pUxRwOsJoKmzIhR4cQVXfuJ5rff/+/Tub/7IiaziVptDYaGg6JNPmtL4kxlmugR8g3ecFjCH0XvsJqzJqzH5P6HXu7gU9Jd1QDcRxHbXBhv076q6hcaLS1GSh6/SvAeykmYtmeZ7ZIlCnYVvvWOJ2ZMKKiCi0lst2SRjthTKuXHC6YC2EYaEN/MZOQcdYs9fIQyQzERv4jaHwGx1Ok2UXI7spYOVK98CurWvV+p+Tjs1px9p8Rw5CWYkYo9b/3IFdW9eycqVbmfc7o2vTvm6dz8qV7v6dbzwYKQEixvQlSTSGYYZqIGKMiEGt/7n9O994kJUrXdat63L3iO7n9k5KQGBvBo4Zx3VQ9RlrHjkXoVGs7wDHCOzNvQkfenPuIiXYt6t5jSrLrdr1xvXC057HrMG5g1AWYlzPtWrXq7J8367mNb0JH/ocelbixpXu1DktXxfMfzTGxK0NwvVfYfp4NGVzzwV08N4YR6y1RcX+lw921H8D1vmdY/2eUI3QOsKHKfMWLTZWvi4i94qYcN26qo8gMKYMQwgFtVFJ1zXGifZn0Iet0W8c2PZ6c3TdKaFeT6hWUAKNpqJZU+cuvVLgT1C9yzhO/OTOYGrDvFTYeNZPWqMdevJvhZdixIS7hdkgKCLyqML3Pti++ZXw0kYHTiZ5+oKBLiixANPnXjZHRe8Rq7eq6hIxprayYVRoqTr/njH0DZUqq3RsvqXWnhCRLWrkV6Lyy33bN+2ILj5FHtVRGRgcaKTzXDNj3rLZFn+5KleLZYHCDIRxAuMHSGtUQeEYynGBvWp4S4SXDe6Gvds27jx5VaNDWM/vt0P+/wE8Shyq9AbwAQAAAABJRU5ErkJggg=="
+LOGO_PNG = (
+    "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"
+)
 
 
 def app_dir():
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.abspath(__file__))
+
+
+def resource_dir():
+    # PyInstaller zet meegeleverde bestanden (zoals 'voorbeeld') in _MEIPASS
+    return getattr(sys, "_MEIPASS", app_dir())
+
+
+def example_dir():
+    for base in (resource_dir(), app_dir()):
+        p = os.path.join(base, "voorbeeld")
+        if os.path.isdir(p):
+            return p
+    return None
 
 
 def load_settings():
@@ -82,6 +140,30 @@ def save_settings(data):
         pass
 
 
+def scan_folder(folder):
+    """Geeft (html-bestanden, 3D-modellen) terug als relatieve paden, ook uit submappen."""
+    html, models = [], []
+    folder = os.path.abspath(folder)
+    base_depth = folder.rstrip(os.sep).count(os.sep)
+    for root, dirs, files in os.walk(folder):
+        dirs[:] = sorted(d for d in dirs if not d.startswith((".", "_")) and d.lower() != "node_modules")
+        if root.rstrip(os.sep).count(os.sep) - base_depth >= MAX_DEPTH:
+            dirs[:] = []
+        for f in sorted(files):
+            rel = os.path.relpath(os.path.join(root, f), folder).replace(os.sep, "/")
+            low = f.lower()
+            if low.endswith(HTML_EXT):
+                html.append(rel)
+            elif low.endswith(MODEL_EXT):
+                models.append(rel)
+    html.sort(key=lambda p: (p.count("/"), p.lower()))
+    return html, models
+
+
+def pretty(rel):
+    return rel.replace("/", " › ")
+
+
 class QuietHandler(SimpleHTTPRequestHandler):
     extensions_map = dict(SimpleHTTPRequestHandler.extensions_map)
     extensions_map.update({
@@ -96,73 +178,9 @@ class QuietHandler(SimpleHTTPRequestHandler):
         pass
 
     def end_headers(self):
+        # altijd de nieuwste versie tonen (handig als je het bestand aanpast)
         self.send_header("Cache-Control", "no-store")
         super().end_headers()
-
-
-# ---------- eigen knoppen en onderdelen ----------
-class FlatButton(tk.Label):
-    """Platte knop met hover-effect."""
-    STYLES = {
-        "primary": (YELLOW, INK, YELLOW_HOVER, None),
-        "secondary": (CARD, INK, CODE_BG, BORDER),
-        "ghost": (CARD, MUTED, CODE_BG, None),
-    }
-
-    def __init__(self, parent, text, command, kind="secondary", big=False, **kw):
-        bg, fg, hover, border = self.STYLES[kind]
-        font = (FONT_SEMI, 13 if big else 10)
-        padx, pady = (26, 10) if big else (12, 6)
-        super().__init__(parent, text=text, bg=bg, fg=fg, font=font, padx=padx, pady=pady,
-                         cursor="hand2", highlightthickness=1 if border else 0,
-                         highlightbackground=border or bg, **kw)
-        self._bg, self._hover, self._fg = bg, hover, fg
-        self.command = command
-        self.enabled = True
-        self.bind("<Enter>", lambda e: self.enabled and self.configure(bg=self._hover))
-        self.bind("<Leave>", lambda e: self.configure(bg=self._bg if self.enabled else "#e6e8ec"))
-        self.bind("<Button-1>", self._click)
-
-    def _click(self, _):
-        if self.enabled and self.command:
-            self.command()
-
-    def set_enabled(self, on):
-        self.enabled = on
-        self.configure(bg=self._bg if on else "#e6e8ec", fg=self._fg if on else "#a1a8b3",
-                       cursor="hand2" if on else "arrow")
-
-
-class StepBadge(tk.Canvas):
-    def __init__(self, parent, number):
-        super().__init__(parent, width=30, height=30, bg=CARD, highlightthickness=0)
-        self.number = number
-        self.set_done(False)
-
-    def set_done(self, done):
-        self.delete("all")
-        if done:
-            self.create_oval(2, 2, 28, 28, fill=GREEN, outline=GREEN)
-            self.create_text(15, 15, text="✓", fill="#ffffff", font=(FONT_SEMI, 12))
-        else:
-            self.create_oval(2, 2, 28, 28, fill=CARD, outline=INK, width=2)
-            self.create_text(15, 15, text=str(self.number), fill=INK, font=(FONT_SEMI, 11))
-
-
-class Card(tk.Frame):
-    def __init__(self, parent, number, title, subtitle=""):
-        super().__init__(parent, bg=CARD, highlightthickness=1, highlightbackground=BORDER)
-        head = tk.Frame(self, bg=CARD)
-        head.pack(fill="x", padx=18, pady=(16, 10))
-        self.badge = StepBadge(head, number)
-        self.badge.pack(side="left", padx=(0, 12))
-        titles = tk.Frame(head, bg=CARD)
-        titles.pack(side="left", fill="x", expand=True)
-        tk.Label(titles, text=title, bg=CARD, fg=INK, font=(FONT_SEMI, 12), anchor="w").pack(fill="x")
-        if subtitle:
-            tk.Label(titles, text=subtitle, bg=CARD, fg=MUTED, font=(FONT, 9), anchor="w").pack(fill="x")
-        self.body = tk.Frame(self, bg=CARD)
-        self.body.pack(fill="x", padx=(60, 18), pady=(0, 16))
 
 
 class App:
@@ -175,24 +193,19 @@ class App:
         self.port = None
         self.public_url = None
         self.running = False
-        self.model_links = []  # (naam, url)
+        self.link_targets = []
 
         root.title(APP_NAME)
         root.configure(bg=BG)
-        root.minsize(660, 800)
+        root.minsize(720, 820)
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         try:
-            self.icon_img = tk.PhotoImage(data=LOGO_ICON)
-            root.iconphoto(True, self.icon_img)
-        except tk.TclError:
-            self.icon_img = None
-        try:
-            ico = os.path.join(app_dir(), "app.ico")
-            if os.path.isfile(ico):
-                root.iconbitmap(default=ico)
-        except tk.TclError:
-            pass
+            self.logo = tk.PhotoImage(data=LOGO_PNG)
+            root.iconphoto(True, self.logo)
+        except Exception:
+            self.logo = None
 
+        self.build_styles()
         self.build_ui()
 
         folder = self.settings.get("map", "")
@@ -200,131 +213,140 @@ class App:
             self.folder_var.set(folder)
         self.refresh_files()
         self.refresh_ngrok_status()
-        self.set_state("stopped")
+        self.set_pill("Gestopt", "#4a5468")
 
-    # ---------- opbouw ----------
+    # ---------- UI ----------
+    def build_styles(self):
+        st = ttk.Style()
+        try:
+            st.theme_use("clam")
+        except tk.TclError:
+            pass
+        st.configure(".", background=BG, foreground=INK, font=("Segoe UI", 10))
+        st.configure("Card.TFrame", background=CARD)
+        st.configure("Card.TLabel", background=CARD, foreground=INK)
+        st.configure("Muted.TLabel", background=CARD, foreground=MUTED)
+        st.configure("Foot.TLabel", background=BG, foreground=MUTED, font=("Segoe UI", 9))
+        st.configure("H2.TLabel", background=CARD, foreground=INK, font=("Segoe UI Semibold", 12))
+        st.configure("TButton", padding=(10, 5), background="#f4f5f7", bordercolor=LINE,
+                     lightcolor="#f4f5f7", darkcolor="#f4f5f7", relief="flat")
+        st.map("TButton", background=[("active", "#e6e9ee"), ("disabled", "#f4f5f7")])
+        st.configure("Big.TButton", font=("Segoe UI Semibold", 13), padding=(22, 9),
+                     background=YELLOW, bordercolor=YELLOW, lightcolor=YELLOW, darkcolor=YELLOW)
+        st.map("Big.TButton", background=[("active", "#ffc933"), ("disabled", "#e3e5ea")])
+        st.configure("TEntry", fieldbackground="#f7f8fa", bordercolor=LINE, lightcolor=LINE, darkcolor=LINE)
+
+    def card(self, parent, title, step):
+        outer = tk.Frame(parent, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+        outer.pack(fill="x", pady=(0, 10))
+        inner = ttk.Frame(outer, style="Card.TFrame", padding=(14, 12))
+        inner.pack(fill="both", expand=True)
+        head = ttk.Frame(inner, style="Card.TFrame")
+        head.pack(fill="x", pady=(0, 8))
+        badge = tk.Label(head, text=str(step), bg=INK, fg=CARD, width=2,
+                         font=("Segoe UI Semibold", 11))
+        badge.pack(side="left", padx=(0, 10))
+        badge.step = step
+        ttk.Label(head, text=title, style="H2.TLabel").pack(side="left")
+        body = ttk.Frame(inner, style="Card.TFrame")
+        body.pack(fill="x")
+        return body, badge
+
+    def set_done(self, badge, done):
+        if done:
+            badge.configure(text="✓", bg=GREEN)
+        else:
+            badge.configure(text=str(badge.step), bg=INK)
+
     def build_ui(self):
-        # kopbalk
+        # donkere kopbalk
         header = tk.Frame(self.root, bg=INK)
         header.pack(fill="x")
-        tk.Frame(header, bg=YELLOW, height=4).pack(fill="x", side="top")
-        inner = tk.Frame(header, bg=INK)
-        inner.pack(fill="x", padx=20, pady=16)
-        try:
-            self.logo_img = tk.PhotoImage(data=LOGO_HEADER)
-            tk.Label(inner, image=self.logo_img, bg=INK).pack(side="left", padx=(0, 14))
-        except tk.TclError:
-            self.logo_img = None
-        titles = tk.Frame(inner, bg=INK)
+        hin = tk.Frame(header, bg=INK)
+        hin.pack(fill="x", padx=16, pady=12)
+        if self.logo:
+            tk.Label(hin, image=self.logo, bg=INK).pack(side="left", padx=(0, 12))
+        titles = tk.Frame(hin, bg=INK)
         titles.pack(side="left")
-        tk.Label(titles, text="VR-viewer starter", bg=INK, fg="#ffffff",
-                 font=(FONT_SEMI, 17), anchor="w").pack(anchor="w")
-        tk.Label(titles, text="Je constructie in VR op de Meta Quest", bg=INK, fg=HEADER_MUTED,
-                 font=(FONT, 10), anchor="w").pack(anchor="w")
-        self.pill = tk.Label(inner, text="", font=(FONT_SEMI, 9), padx=12, pady=4)
+        tk.Label(titles, text=APP_NAME, bg=INK, fg="#ffffff",
+                 font=("Segoe UI Semibold", 16)).pack(anchor="w")
+        tk.Label(titles, text="Je constructie in VR op de Meta Quest", bg=INK, fg="#b8c0cc",
+                 font=("Segoe UI", 10)).pack(anchor="w")
+        self.pill = tk.Label(hin, text="", fg="#ffffff", font=("Segoe UI Semibold", 9), padx=10, pady=3)
         self.pill.pack(side="right")
+        tk.Frame(self.root, bg=YELLOW, height=4).pack(fill="x")
 
-        tip = ("Tip: open op de Quest enkel het begin van de link en maak er een bladwijzer van. "
-               "Je ziet dan telkens al je modellen.")
-        tk.Label(self.root, text=tip, bg=BG, fg=MUTED, font=(FONT, 9), anchor="w", justify="left",
-                 wraplength=600).pack(side="bottom", fill="x", padx=22, pady=(0, 14))
+        wrap = ttk.Frame(self.root, padding=16)
+        wrap.pack(fill="both", expand=True)
 
-        body = tk.Frame(self.root, bg=BG)
-        body.pack(fill="both", expand=True, padx=20, pady=18)
-
-        # kaart 1: map
-        c1 = Card(body, 1, "Kies je map met VR-modellen", "Eén hoofdmap, eventueel met een submap per model")
-        c1.pack(fill="x", pady=(0, 12))
-        self.card_folder = c1
-        row = tk.Frame(c1.body, bg=CARD)
+        # Stap 1: map
+        b1, self.badge1 = self.card(wrap, "Kies je map met VR-modellen", 1)
+        row = ttk.Frame(b1, style="Card.TFrame")
         row.pack(fill="x")
         self.folder_var = tk.StringVar()
-        entry_wrap = tk.Frame(row, bg=CODE_BG, highlightthickness=1, highlightbackground=BORDER)
-        entry_wrap.pack(side="left", fill="x", expand=True)
-        self.folder_entry = tk.Entry(entry_wrap, textvariable=self.folder_var, relief="flat", bg=CODE_BG,
-                                     fg=INK, font=(FONT, 10), insertbackground=INK)
-        self.folder_entry.pack(fill="x", padx=8, pady=6)
-        self.folder_entry.bind("<Return>", lambda e: self.folder_changed())
-        self.folder_entry.bind("<FocusOut>", lambda e: self.folder_changed())
-        FlatButton(row, "Bladeren…", self.choose_folder).pack(side="left", padx=(8, 0))
-        self.files_label = tk.Label(c1.body, text="", bg=CARD, fg=MUTED, font=(FONT, 9),
-                                    anchor="w", justify="left", wraplength=500)
-        self.files_label.pack(fill="x", pady=(8, 0))
+        ttk.Entry(row, textvariable=self.folder_var).pack(side="left", fill="x", expand=True)
+        ttk.Button(row, text="Kies map…", command=self.choose_folder).pack(side="left", padx=(8, 0))
+        if example_dir():
+            ttk.Button(row, text="Voorbeeld proberen", command=self.use_example).pack(side="left", padx=(8, 0))
+        self.files_label = ttk.Label(b1, text="", style="Muted.TLabel", wraplength=600, justify="left")
+        self.files_label.pack(anchor="w", pady=(8, 0))
 
-        # kaart 2: ngrok
-        c2 = Card(body, 2, "ngrok instellen", "Zorgt voor de beveiligde link. Eén keer instellen.")
-        c2.pack(fill="x", pady=(0, 12))
-        self.card_ngrok = c2
-        self.ngrok_label = tk.Label(c2.body, text="", bg=CARD, fg=INK, font=(FONT, 10),
-                                    anchor="w", justify="left", wraplength=500)
-        self.ngrok_label.pack(fill="x")
-        nrow = tk.Frame(c2.body, bg=CARD)
-        nrow.pack(anchor="w", pady=(10, 0))
-        self.dl_btn = FlatButton(nrow, "Download ngrok", self.download_ngrok)
+        # Stap 2: ngrok
+        b2, self.badge2 = self.card(wrap, "ngrok (voor de beveiligde link)", 2)
+        self.ngrok_label = ttk.Label(b2, text="", style="Card.TLabel", wraplength=600, justify="left")
+        self.ngrok_label.pack(anchor="w")
+        nrow = ttk.Frame(b2, style="Card.TFrame")
+        nrow.pack(anchor="w", pady=(8, 0))
+        self.dl_btn = ttk.Button(nrow, text="Download ngrok", command=self.download_ngrok)
         self.dl_btn.pack(side="left")
-        self.token_btn = FlatButton(nrow, "Authtoken invullen…", self.ask_token)
-        self.token_btn.pack(side="left", padx=(8, 0))
-        FlatButton(nrow, "Gratis account maken", lambda: webbrowser.open(NGROK_SIGNUP_PAGE),
-                   kind="ghost").pack(side="left", padx=(8, 0))
+        ttk.Button(nrow, text="Kies ngrok.exe…", command=self.choose_ngrok).pack(side="left", padx=(8, 0))
+        ttk.Button(nrow, text="Authtoken invullen…", command=self.ask_token).pack(side="left", padx=(8, 0))
+        ttk.Button(nrow, text="Gratis account maken",
+                   command=lambda: webbrowser.open(NGROK_SIGNUP_PAGE)).pack(side="left", padx=(8, 0))
 
-        # kaart 3: starten
-        c3 = Card(body, 3, "Start en open op de Quest", "Laat dit venster open zolang je de Quest gebruikt")
-        c3.pack(fill="both", expand=True)
-        self.card_run = c3
-        top = tk.Frame(c3.body, bg=CARD)
-        top.pack(fill="x")
-        self.start_btn = FlatButton(top, "▶  Start", self.toggle, kind="primary", big=True)
+        # Stap 3: start
+        b3, self.badge3 = self.card(wrap, "Start en open op de Quest", 3)
+        srow = ttk.Frame(b3, style="Card.TFrame")
+        srow.pack(fill="x")
+        self.start_btn = ttk.Button(srow, text="Start", style="Big.TButton", command=self.toggle)
         self.start_btn.pack(side="left")
-        self.status_label = tk.Label(top, text="", bg=CARD, fg=MUTED, font=(FONT, 10),
-                                     anchor="w", justify="left", wraplength=320)
-        self.status_label.pack(side="left", padx=(14, 0), fill="x", expand=True)
+        self.status_label = ttk.Label(srow, text="Nog niet gestart.", style="Muted.TLabel",
+                                      wraplength=440, justify="left")
+        self.status_label.pack(side="left", padx=(14, 0))
 
-        # grote link
-        self.link_box = tk.Frame(c3.body, bg=YELLOW_SOFT, highlightthickness=1, highlightbackground=YELLOW)
-        tk.Label(self.link_box, text="TYP DIT IN DE BROWSER VAN JE QUEST", bg=YELLOW_SOFT, fg=MUTED,
-                 font=(FONT_SEMI, 8), anchor="w").pack(fill="x", padx=14, pady=(10, 0))
-        self.big_link = tk.Label(self.link_box, text="", bg=YELLOW_SOFT, fg=INK, font=(MONO, 13, "bold"),
-                                 anchor="w", justify="left", wraplength=480)
-        self.big_link.pack(fill="x", padx=14, pady=(2, 8))
-        lrow = tk.Frame(self.link_box, bg=YELLOW_SOFT)
-        lrow.pack(anchor="w", padx=14, pady=(0, 12))
-        FlatButton(lrow, "Kopieer link", self.copy_link).pack(side="left")
-        FlatButton(lrow, "Test op deze computer", self.open_local).pack(side="left", padx=(8, 0))
-
-        # modellenlijst
-        self.models_title = tk.Label(c3.body, text="MODELLEN IN JE MAP", bg=CARD, fg=MUTED,
-                                     font=(FONT_SEMI, 8), anchor="w")
-        self.models_frame = tk.Frame(c3.body, bg=CARD)
-        self.links = tk.Listbox(self.models_frame, height=5, font=(FONT, 10), activestyle="none",
-                                bg=CODE_BG, fg=INK, relief="flat", highlightthickness=0,
-                                selectbackground=YELLOW, selectforeground=INK, borderwidth=0)
-        self.links.pack(fill="both", expand=True)
+        ttk.Label(b3, text="Kies een model:", style="Card.TLabel").pack(anchor="w", pady=(12, 4))
+        lb_frame = tk.Frame(b3, bg=LINE, padx=1, pady=1)
+        lb_frame.pack(fill="both", expand=True)
+        self.links = tk.Listbox(lb_frame, height=5, font=("Segoe UI", 10), activestyle="none",
+                                bg="#f7f8fa", fg=INK, relief="flat", highlightthickness=0,
+                                selectbackground=YELLOW, selectforeground=INK, borderwidth=6)
+        self.links.pack(side="left", fill="both", expand=True)
+        sb = ttk.Scrollbar(lb_frame, orient="vertical", command=self.links.yview)
+        sb.pack(side="left", fill="y")
+        self.links.configure(yscrollcommand=sb.set)
         self.links.bind("<<ListboxSelect>>", lambda e: self.show_selected())
 
+        box = tk.Frame(b3, bg=YELLOW_SOFT, highlightbackground=YELLOW, highlightthickness=2)
+        box.pack(fill="x", pady=(10, 8))
+        tk.Label(box, text="Typ dit in de browser van je Quest:", bg=YELLOW_SOFT, fg=MUTED,
+                 font=("Segoe UI", 9)).pack(anchor="w", padx=12, pady=(8, 0))
+        self.big_link = tk.Label(box, text="—", bg=YELLOW_SOFT, fg=INK, font=("Consolas", 13, "bold"),
+                                 wraplength=640, justify="left")
+        self.big_link.pack(anchor="w", padx=12, pady=(2, 10))
+        box.bind("<Configure>", lambda e: self.big_link.configure(wraplength=max(200, e.width - 30)))
 
-    # ---------- toestand ----------
-    def set_state(self, state, text=None):
-        if state == "stopped":
-            self.pill.configure(text="●  GESTOPT", bg=INK_2, fg=HEADER_MUTED)
-            self.start_btn.configure(text="▶  Start")
-            self.status_label.configure(text=text or "Klik op Start als stap 1 en 2 in orde zijn.", fg=MUTED)
-            self.link_box.pack_forget()
-            self.models_title.pack_forget()
-            self.models_frame.pack_forget()
-            self.card_run.badge.set_done(False)
-        elif state == "starting":
-            self.pill.configure(text="●  OPSTARTEN…", bg=YELLOW, fg=INK)
-            self.start_btn.configure(text="■  Stop")
-            self.status_label.configure(text=text or "Server en ngrok worden gestart…", fg=MUTED)
-        elif state == "active":
-            self.pill.configure(text="●  ACTIEF", bg=GREEN, fg="#ffffff")
-            self.start_btn.configure(text="■  Stop")
-            self.status_label.configure(text=text or "Klaar. Open de link hieronder op je Quest.", fg=GREEN)
-            self.link_box.pack(fill="x", pady=(14, 0))
-            self.card_run.badge.set_done(True)
+        brow = ttk.Frame(b3, style="Card.TFrame")
+        brow.pack(anchor="w")
+        ttk.Button(brow, text="Kopieer link", command=self.copy_link).pack(side="left")
+        ttk.Button(brow, text="Test op deze computer", command=self.open_local).pack(side="left", padx=(8, 0))
 
-    def flash(self, text, color=GREEN):
-        self.status_label.configure(text=text, fg=color)
+        tip = ("Tip: maak op de Quest een bladwijzer van de link. Klik op ‘Visit Site’ als ngrok dat vraagt "
+               "en druk op ‘Start VR’. Laat dit venster open zolang je de Quest gebruikt.")
+        ttk.Label(wrap, text=tip, style="Foot.TLabel", wraplength=620, justify="left").pack(anchor="w", pady=(2, 0))
+        ttk.Label(wrap, text="Versie " + APP_VERSION, style="Foot.TLabel").pack(anchor="e", pady=(6, 0))
+
+    def set_pill(self, text, color):
+        self.pill.configure(text="● " + text, bg=color)
 
     # ---------- map ----------
     def choose_folder(self):
@@ -332,76 +354,91 @@ class App:
         d = filedialog.askdirectory(initialdir=start, title="Kies je map met VR-modellen")
         if d:
             self.folder_var.set(os.path.normpath(d))
-            self.folder_changed()
+            self.settings["map"] = self.folder_var.get()
+            save_settings(self.settings)
+            if not self.running:
+                self.stop_server()
+            self.refresh_files()
 
-    def folder_changed(self):
-        self.settings["map"] = self.folder_var.get()
-        save_settings(self.settings)
+    def use_example(self):
+        if self.running:
+            messagebox.showinfo(APP_NAME, "Klik eerst op Stop.")
+            return
+        # niet bewaren: na een update van de app verandert de installatiemap
+        self.folder_var.set(example_dir())
+        self.stop_server()
         self.refresh_files()
 
     def html_files(self):
-        """HTML-bestanden in de map en in submappen (tot 2 niveaus diep), als relatieve paden."""
         folder = self.folder_var.get()
         if not folder or not os.path.isdir(folder):
             return []
-        found = []
-        base_depth = folder.rstrip("\\/").count(os.sep)
-        for root, dirs, files in os.walk(folder):
-            dirs[:] = sorted(d for d in dirs if not d.startswith((".", "_")))
-            if root.count(os.sep) - base_depth >= 2:
-                dirs[:] = []
-            for f in sorted(files):
-                if f.lower().endswith((".html", ".htm")):
-                    rel = os.path.relpath(os.path.join(root, f), folder).replace(os.sep, "/")
-                    found.append(rel)
-        return found
+        return scan_folder(folder)[0]
 
     def refresh_files(self):
         folder = self.folder_var.get()
         ok = False
         if not folder:
-            txt = "Nog geen map gekozen."
+            txt = "Nog geen map gekozen. Geen modellen bij de hand? Klik op ‘Voorbeeld proberen’."
         elif not os.path.isdir(folder):
-            txt = "Deze map bestaat niet."
+            txt = "Deze map bestaat niet (meer). Kies een andere map."
         else:
-            html = self.html_files()
+            html, models = scan_folder(folder)
             if not html:
-                txt = "Geen VR-pagina's (HTML) gevonden. Zet het bestand dat Claude maakte in deze map."
+                txt = ("Geen VR-pagina’s (HTML) gevonden. Zet het bestand dat Claude voor je maakte "
+                       "in deze map, eventueel in een eigen submap per model.")
             else:
                 ok = True
-                names = ", ".join(html[:6]) + (" …" if len(html) > 6 else "")
-                txt = "✓ {} model{} gevonden: {}".format(len(html), "" if len(html) == 1 else "len", names)
-        self.files_label.configure(text=txt, fg=GREEN if ok else MUTED)
-        self.card_folder.badge.set_done(ok)
-        if self.running and self.public_url:
-            self.fill_links()
+                shown = [pretty(h) for h in html[:6]]
+                txt = "{} VR-pagina{} gevonden: {}".format(len(html), "" if len(html) == 1 else "’s",
+                                                             ", ".join(shown))
+                if len(html) > 6:
+                    txt += " …"
+                if models:
+                    txt += "   ·   {} 3D-model{}".format(len(models), "" if len(models) == 1 else "len")
+        self.files_label.configure(text=txt)
+        self.set_done(self.badge1, ok)
 
     # ---------- ngrok ----------
     def find_ngrok(self):
-        for c in (os.path.join(app_dir(), "ngrok.exe"),
-                  os.path.join(self.folder_var.get() or "", "ngrok.exe"),
-                  os.path.join(DATA_DIR, "ngrok.exe")):
+        candidates = [
+            self.settings.get("ngrok_pad", ""),
+            os.path.join(DATA_DIR, "ngrok.exe"),
+            os.path.join(app_dir(), "ngrok.exe"),
+        ]
+        for c in candidates:
             if c and os.path.isfile(c):
                 return c
         return shutil.which("ngrok")
 
+    def ngrok_cmd(self, exe, *args):
+        cmd = [exe] + list(args)
+        # eigen config in de datamap; een eerder ingestelde (standaard) config blijft ook werken
+        if os.path.isfile(NGROK_CONFIG):
+            cmd += ["--config", NGROK_CONFIG]
+        return cmd
+
     def refresh_ngrok_status(self):
         exe = self.find_ngrok()
-        token = self.settings.get("token_ingesteld")
-        if exe and token:
-            txt, color = "✓ ngrok is klaar voor gebruik.", GREEN
-        elif exe:
-            txt, color = "ngrok is gedownload. Vul nog één keer je authtoken in.", INK
+        token = bool(self.settings.get("token_ingesteld"))
+        if exe:
+            txt = "✓ ngrok gevonden."
+            txt += " Authtoken is ingesteld." if token else " Vul nu één keer je authtoken in (van je gratis ngrok-account)."
+            self.dl_btn.state(["disabled"])
         else:
-            txt, color = "ngrok ontbreekt nog. Klik op ‘Download ngrok’ (±10 MB).", INK
-        self.ngrok_label.configure(text=txt, fg=color)
-        self.dl_btn.set_enabled(not exe)
-        self.token_btn.set_enabled(bool(exe))
-        self.card_ngrok.badge.set_done(bool(exe and token))
+            txt = ("ngrok is een apart, gratis programma dat de beveiligde link maakt. "
+                   "Klik op ‘Download ngrok’ (±10 MB), of download het zelf via ngrok.com en kies het met ‘Kies ngrok.exe…’.")
+            self.dl_btn.state(["!disabled"])
+        self.ngrok_label.configure(text=txt)
+        self.set_done(self.badge2, bool(exe and token))
 
     def download_ngrok(self):
-        self.dl_btn.set_enabled(False)
-        self.ngrok_label.configure(text="ngrok wordt gedownload…", fg=MUTED)
+        if not messagebox.askyesno(APP_NAME,
+                                   "De app downloadt nu ngrok.exe van de officiële website van ngrok "
+                                   "en bewaart het in je gebruikersmap.\n\nDoorgaan?"):
+            return
+        self.dl_btn.state(["disabled"])
+        self.ngrok_label.configure(text="ngrok wordt gedownload…")
 
         def work():
             try:
@@ -413,25 +450,41 @@ class App:
                 os.remove(zpath)
                 self.root.after(0, self.refresh_ngrok_status)
             except Exception as e:
-                msg = ("Download mislukt: {}\n\nDownload ngrok zelf via ngrok.com en zet ngrok.exe "
-                       "naast deze app.").format(e)
+                msg = ("Download mislukt: {}\n\nDownload ngrok zelf via ngrok.com en kies het bestand "
+                       "met ‘Kies ngrok.exe…’.").format(e)
                 self.root.after(0, lambda: (messagebox.showerror(APP_NAME, msg), self.refresh_ngrok_status()))
 
         threading.Thread(target=work, daemon=True).start()
 
+    def choose_ngrok(self):
+        if messagebox.askyesno(APP_NAME, "Heb je ngrok nog niet gedownload?\n\n"
+                                         "Klik op Ja om de downloadpagina van ngrok te openen, "
+                                         "of op Nee als je ngrok.exe al hebt."):
+            webbrowser.open(NGROK_DOWNLOAD_PAGE)
+            return
+        p = filedialog.askopenfilename(title="Kies ngrok.exe",
+                                       filetypes=[("ngrok", "ngrok.exe"), ("Programma's", "*.exe")])
+        if p:
+            self.settings["ngrok_pad"] = os.path.normpath(p)
+            save_settings(self.settings)
+            self.refresh_ngrok_status()
+
     def ask_token(self):
         exe = self.find_ngrok()
         if not exe:
+            messagebox.showinfo(APP_NAME, "Download of kies eerst ngrok.")
             return
-        if messagebox.askyesno(APP_NAME, "Je authtoken staat op je ngrok-dashboard.\n\nWil je die pagina nu openen?"):
+        if messagebox.askyesno(APP_NAME, "Je authtoken staat op je ngrok-dashboard.\n\n"
+                                         "Wil je die pagina nu openen?"):
             webbrowser.open(NGROK_TOKEN_PAGE)
         token = simpledialog.askstring(APP_NAME, "Plak hier je ngrok-authtoken:", parent=self.root)
         if not token:
             return
         token = token.strip().split()[-1]  # werkt ook als je het hele commando plakt
         try:
-            r = subprocess.run([exe, "config", "add-authtoken", token], capture_output=True,
-                               text=True, creationflags=NO_WINDOW, timeout=30)
+            os.makedirs(DATA_DIR, exist_ok=True)
+            r = subprocess.run([exe, "config", "add-authtoken", token, "--config", NGROK_CONFIG],
+                               capture_output=True, text=True, creationflags=NO_WINDOW, timeout=30)
             if r.returncode == 0:
                 self.settings["token_ingesteld"] = True
                 save_settings(self.settings)
@@ -449,6 +502,9 @@ class App:
         else:
             self.start()
 
+    def set_status(self, text, color=MUTED):
+        self.status_label.configure(text=text, foreground=color)
+
     def start(self):
         folder = self.folder_var.get()
         if not folder or not os.path.isdir(folder):
@@ -456,10 +512,38 @@ class App:
             return
         exe = self.find_ngrok()
         if not exe:
-            messagebox.showwarning(APP_NAME, "Download eerst ngrok (stap 2).")
+            messagebox.showwarning(APP_NAME, "Download of kies eerst ngrok (stap 2).")
             return
-        self.folder_changed()
+        if folder != example_dir():
+            self.settings["map"] = folder
+            save_settings(self.settings)
+        self.refresh_files()
 
+        if self.server:  # draaide al voor 'Test op deze computer'
+            self.stop_server()
+        if not self.start_server(folder):
+            return
+
+        self.ngrok_output = []
+        try:
+            self.ngrok_proc = subprocess.Popen(
+                self.ngrok_cmd(exe, "http", str(self.port), "--log", "stdout"),
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
+        except Exception as e:
+            self.stop()
+            messagebox.showerror(APP_NAME, "ngrok kon niet starten: {}".format(e))
+            return
+        threading.Thread(target=self.read_ngrok, daemon=True).start()
+
+        self.running = True
+        self.start_btn.configure(text="Stop")
+        self.set_status("Bezig met opstarten…")
+        self.set_pill("Opstarten", "#a77d00")
+        threading.Thread(target=self.wait_for_url, daemon=True).start()
+
+    def start_server(self, folder):
+        # webserver: alleen op deze computer bereikbaar, ngrok maakt de rest
         handler = partial(QuietHandler, directory=folder)
         self.server = None
         for port in range(8000, 8020):
@@ -471,24 +555,18 @@ class App:
                 continue
         if not self.server:
             messagebox.showerror(APP_NAME, "Geen vrije poort gevonden (8000–8019).")
-            return
+            return False
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        return True
 
-        self.ngrok_output = []
-        try:
-            self.ngrok_proc = subprocess.Popen(
-                [exe, "http", str(self.port), "--log", "stdout"],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                creationflags=NO_WINDOW)
-        except Exception as e:
-            self.stop()
-            messagebox.showerror(APP_NAME, "ngrok kon niet starten: {}".format(e))
-            return
-        threading.Thread(target=self.read_ngrok, daemon=True).start()
-
-        self.running = True
-        self.set_state("starting")
-        threading.Thread(target=self.wait_for_url, daemon=True).start()
+    def stop_server(self):
+        if self.server:
+            try:
+                self.server.shutdown()
+                self.server.server_close()
+            except Exception:
+                pass
+            self.server = None
 
     def read_ngrok(self):
         proc = self.ngrok_proc
@@ -501,12 +579,14 @@ class App:
             pass
 
     def url_from_log(self):
+        # ngrok schrijft zelf de link in zijn meldingen: ... msg="started tunnel" ... url=https://...
         for line in list(self.ngrok_output):
             if "started tunnel" in line and "url=https://" in line:
                 return line.split("url=", 1)[1].split()[0].strip('"')
         return None
 
     def api_addr_from_log(self):
+        # het adres van ngrok's eigen webpagina (4040, of 4041/4042 als 4040 bezet is)
         for line in list(self.ngrok_output):
             if "starting web service" in line and "addr=" in line:
                 return line.split("addr=", 1)[1].split()[0].strip('"')
@@ -538,23 +618,22 @@ class App:
             self.root.after(0, self.on_ngrok_failed)
 
     def on_url(self, url):
-        self.public_url = url
-        self.set_state("active")
+        self.public_url = url.rstrip("/")
+        self.set_status("✓ Actief. Kies een model en typ de link in je Quest.", GREEN)
+        self.set_pill("Actief", GREEN)
+        self.set_done(self.badge3, True)
         self.fill_links()
 
     def fill_links(self):
-        base = self.public_url.rstrip("/")
-        self.model_links = [("Alle modellen (startpagina)", base + "/")]
-        for rel in self.html_files():
-            self.model_links.append((rel, base + "/" + urllib.parse.quote(rel)))
         self.links.delete(0, "end")
-        for name, _ in self.model_links:
-            self.links.insert("end", "  " + name.replace("/", "  ›  "))
-        self.links.configure(height=min(len(self.model_links), 6))
-        if len(self.model_links) > 1:
-            self.models_title.pack(fill="x", pady=(14, 4))
-            self.models_frame.pack(fill="both", expand=True)
-        self.links.selection_clear(0, "end")
+        self.link_targets = []
+        files = self.html_files()
+        if not files:
+            self.links.insert("end", "  (hoofdmap)")
+            self.link_targets.append(self.public_url + "/")
+        for f in files:
+            self.links.insert("end", "  " + pretty(f))
+            self.link_targets.append("{}/{}".format(self.public_url, urllib.parse.quote(f)))
         self.links.selection_set(0)
         self.show_selected()
 
@@ -567,9 +646,9 @@ class App:
             self.refresh_ngrok_status()
             messagebox.showwarning(APP_NAME, "ngrok vraagt om je authtoken.\n\n"
                                              "Klik op ‘Authtoken invullen…’ in stap 2 en probeer opnieuw.")
-        elif "108" in out or "already online" in out.lower():
+        elif "108" in out or "already" in out.lower():
             messagebox.showwarning(APP_NAME, "Er draait al een andere ngrok (bv. in een terminalvenster). "
-                                             "Sluit die eerst via Taakbeheer en probeer opnieuw.")
+                                             "Sluit die eerst en probeer opnieuw.")
         else:
             messagebox.showerror(APP_NAME, "ngrok gaf geen link.\n\nLaatste meldingen:\n" + (out or "(geen)"))
 
@@ -585,43 +664,53 @@ class App:
                 except Exception:
                     pass
             self.ngrok_proc = None
-        if self.server:
-            try:
-                self.server.shutdown()
-                self.server.server_close()
-            except Exception:
-                pass
-            self.server = None
+        self.stop_server()
         self.public_url = None
-        self.model_links = []
+        self.start_btn.configure(text="Start")
+        self.set_status("Gestopt.")
+        self.set_pill("Gestopt", "#4a5468")
+        self.set_done(self.badge3, False)
         self.links.delete(0, "end")
-        self.set_state("stopped", "Gestopt.")
+        self.link_targets = []
+        self.big_link.configure(text="—")
 
     # ---------- links ----------
-    def selected(self):
+    def selected_link(self):
         sel = self.links.curselection()
-        if not sel or sel[0] >= len(self.model_links):
-            return self.model_links[0] if self.model_links else None
-        return self.model_links[sel[0]]
+        if not sel or sel[0] >= len(self.link_targets):
+            return None
+        return self.link_targets[sel[0]]
 
     def show_selected(self):
-        item = self.selected()
-        self.big_link.configure(text=item[1].replace("https://", "") if item else "")
+        link = self.selected_link()
+        # zonder https:// – dat hoef je op de Quest niet te typen
+        self.big_link.configure(text=link.split("://", 1)[-1] if link else "—")
 
     def copy_link(self):
-        item = self.selected()
-        if not item:
+        link = self.selected_link()
+        if not link:
+            messagebox.showinfo(APP_NAME, "Start eerst en kies een model.")
             return
         self.root.clipboard_clear()
-        self.root.clipboard_append(item[1])
-        self.flash("✓ Link gekopieerd.")
+        self.root.clipboard_append(link)
+        self.set_status("Link gekopieerd.", GREEN)
 
     def open_local(self):
+        # werkt ook zonder ngrok: dan start enkel de webserver op deze computer
         if not self.server:
-            return
-        item = self.selected()
-        path = item[1].split(self.public_url.rstrip("/"), 1)[-1] if item else "/"
-        webbrowser.open("http://localhost:{}{}".format(self.port, path or "/"))
+            folder = self.folder_var.get()
+            if not folder or not os.path.isdir(folder):
+                messagebox.showinfo(APP_NAME, "Kies eerst een map (stap 1).")
+                return
+            if not self.start_server(folder):
+                return
+            self.set_status("Enkel op deze computer actief (zonder Quest-link).")
+        link = self.selected_link() or ""
+        path = link.split(self.public_url, 1)[-1] if (self.public_url and link) else ""
+        if not path:
+            html = self.html_files()
+            path = "/" + urllib.parse.quote(html[0]) if html else "/"
+        webbrowser.open("http://localhost:{}{}".format(self.port, path))
 
     def on_close(self):
         self.stop()
@@ -632,7 +721,6 @@ def main():
     try:
         from ctypes import windll
         windll.shcore.SetProcessDpiAwareness(1)  # scherpe tekst op hoge-resolutieschermen
-        windll.shell32.SetCurrentProcessExplicitAppUserModelID("VRViewerStarter")  # eigen icoon in taakbalk
     except Exception:
         pass
     root = tk.Tk()
